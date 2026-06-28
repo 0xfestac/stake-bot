@@ -6,6 +6,8 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "puppeteer": "^22.0.0"
+    "puppeteer-core": "^22.0.0",
+    "@sparticuz/chromium": "^122.0.0",
+    "express": "^4.19.2"
   }
 }
