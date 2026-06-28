@@ -14,7 +14,7 @@ app.get('/', (req, res) => res.send('Bot is active!'));
 app.listen(PORT, () => console.log(`Web server listening on port ${PORT}`));
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-const HISTORY_FILE = '/tmp/processed_tweets.json'; // Use /tmp for cloud
+const HISTORY_FILE = '/tmp/processed_tweets.json';
 let processedTweets = new Set();
 
 if (fs.existsSync(HISTORY_FILE)) {
@@ -30,52 +30,62 @@ function saveHistory() {
 
 function extractGiveawayVariable(text) {
     const textLower = text.toLowerCase();
-    const isGiveaway = textLower.includes("giveaway") || textLower.includes("stake") || textLower.includes("username");
-    if (!isGiveaway) return null;
-    return STAKE_USERNAME;
+    if (textLower.includes("giveaway") || textLower.includes("stake") || textLower.includes("username")) {
+        return STAKE_USERNAME;
+    }
+    return null;
 }
 
 async function scanTimeline(page) {
+    // Spoofing the browser to look like a standard desktop user
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36');
     console.log(`[+] Scanning: ${TARGET_PROFILE}`);
-    await page.goto(TARGET_PROFILE, { waitUntil: 'networkidle2', timeout: 120000 });
-    await delay(5000);
+    
+    try {
+        // 'domcontentloaded' is faster and less likely to timeout than 'networkidle2'
+        await page.goto(TARGET_PROFILE, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        
+        // Wait until tweets are actually visible before trying to scan
+        await page.waitForSelector('[data-testid="tweet"]', { timeout: 30000 });
+        await delay(3000);
 
-    const tweets = await page.evaluate(() => {
-        return Array.from(document.querySelectorAll('[data-testid="tweet"]'))
-            .map(el => ({
-                text: el.querySelector('[data-testid="tweetText"]')?.innerText || "",
-                url: Array.from(el.querySelectorAll('a')).find(a => a.href.includes('/status/'))?.href.split('?')[0]
-            })).filter(t => t.url);
-    });
+        const tweets = await page.evaluate(() => {
+            return Array.from(document.querySelectorAll('[data-testid="tweet"]'))
+                .map(el => ({
+                    text: el.querySelector('[data-testid="tweetText"]')?.innerText || "",
+                    url: Array.from(el.querySelectorAll('a')).find(a => a.href.includes('/status/'))?.href.split('?')[0]
+                })).filter(t => t.url);
+        });
 
-    for (const tweet of tweets) {
-        if (processedTweets.has(tweet.url)) continue;
-        const payload = extractGiveawayVariable(tweet.text);
-        if (payload) {
-            const entryPage = await page.browser().newPage();
-            await entryPage.setViewport({ width: 375, height: 812, isMobile: true });
-            await entryPage.setCookie({ name: 'auth_token', value: AUTH_TOKEN, domain: '.x.com' });
-            try {
-                await entryPage.goto(tweet.url, { waitUntil: 'networkidle2' });
-                await delay(5000);
-                const replyBtn = await entryPage.$('[data-testid="reply"]');
-                if (replyBtn) {
-                    await replyBtn.tap();
-                    await delay(3000);
-                    await entryPage.evaluate((val) => {
-                        const el = document.querySelector('div[role="textbox"]');
-                        el.focus();
-                        document.execCommand('insertText', false, val);
-                    }, payload);
-                    await entryPage.tap('[data-testid="tweetButton"]');
-                    console.log(`[+] Replied to: ${tweet.url}`);
-                }
-            } catch (err) { console.error("Error:", err.message); }
-            finally { await entryPage.close(); }
-            processedTweets.add(tweet.url);
-            saveHistory();
+        for (const tweet of tweets) {
+            if (processedTweets.has(tweet.url)) continue;
+            const payload = extractGiveawayVariable(tweet.text);
+            if (payload) {
+                const entryPage = await page.browser().newPage();
+                await entryPage.setViewport({ width: 375, height: 812, isMobile: true });
+                await entryPage.setCookie({ name: 'auth_token', value: AUTH_TOKEN, domain: '.x.com' });
+                try {
+                    await entryPage.goto(tweet.url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+                    await delay(5000);
+                    const replyBtn = await entryPage.$('[data-testid="reply"]');
+                    if (replyBtn) {
+                        await replyBtn.tap();
+                        await delay(3000);
+                        await entryPage.evaluate((val) => {
+                            const el = document.querySelector('div[role="textbox"]');
+                            el.focus();
+                            document.execCommand('insertText', false, val);
+                        }, payload);
+                        await entryPage.tap('[data-testid="tweetButton"]');
+                        console.log(`[+] Replied to: ${tweet.url}`);
+                    }
+                } catch (err) { console.error("Reply Error:", err.message); }
+                finally { await entryPage.close(); }
+                processedTweets.add(tweet.url);
+                saveHistory();
+            }
         }
-    }
+    } catch (err) { console.error(`[!] Scan failed: ${err.message}`); }
 }
 
 async function run() {
@@ -92,5 +102,5 @@ async function run() {
     await browser.close();
 }
 
-setInterval(run, 600000); // 10 minutes
+setInterval(run, 600000);
 run();
