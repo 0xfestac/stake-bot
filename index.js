@@ -37,7 +37,7 @@ function extractGiveawayVariable(text) {
 
 async function scanTimeline(page) {
     console.log(`[+] Scanning: ${TARGET_PROFILE}`);
-    await page.goto(TARGET_PROFILE, { waitUntil: 'networkidle2', timeout: 60000 });
+    await page.goto(TARGET_PROFILE, { waitUntil: 'networkidle2', timeout: 120000 });
     await delay(5000);
 
     const tweets = await page.evaluate(() => {
